@@ -25,7 +25,7 @@ import type {
   TrainingEnrollmentRecord,
   TransactionRecord,
 } from '../types/hrms';
-import { calculateDateRangeDays, calculateEmployeeProgression } from '../utils/hrEngine';
+import { calculateDateRangeDays, calculateEmployeeProgression, todayBaghdadISO } from '../utils/hrEngine';
 import { formatIQD } from '../utils/exporters';
 import { hrmsApi } from '../lib/api';
 import type { OfficialPreviewTarget } from './OfficialDocumentModal';
@@ -69,9 +69,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
   const [leaveForm, setLeaveForm] = useState({
     leaveType: config.orgCatalogs.leaveTypes[0]?.name || 'إجازة اعتيادية',
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
+    startDate: todayBaghdadISO(),
+    endDate: todayBaghdadISO(),
     reason: '',
+    attachmentDocumentId: '',
   });
 
   const [docRequestForm, setDocRequestForm] = useState({
@@ -80,7 +81,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     notes: '',
   });
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayISO = useMemo(() => todayBaghdadISO(), []);
 
   useEffect(() => {
     if (!employee) {
@@ -162,8 +163,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     }
   };
 
+  const selectedLeaveCfg = config.orgCatalogs.leaveTypes.find((lt) => lt.name === leaveForm.leaveType);
+
   const handleSubmitLeave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (selectedLeaveCfg?.requiresAttachment && !leaveForm.attachmentDocumentId) {
+      onNotify(`يتطلب تقديم «${leaveForm.leaveType}» اختيار وثيقة مرفقة من أرشيفك الرقمي.`, 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       await hrmsApi.createLeave({
@@ -172,12 +179,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         startDate: leaveForm.startDate,
         endDate: leaveForm.endDate,
         reason: leaveForm.reason,
+        attachmentDocumentId: leaveForm.attachmentDocumentId ? Number(leaveForm.attachmentDocumentId) : null,
       });
       setLeaveForm({
         leaveType: config.orgCatalogs.leaveTypes[0]?.name || 'إجازة اعتيادية',
-        startDate: new Date().toISOString().slice(0, 10),
-        endDate: new Date().toISOString().slice(0, 10),
+        startDate: todayBaghdadISO(),
+        endDate: todayBaghdadISO(),
         reason: '',
+        attachmentDocumentId: '',
       });
       onNotify('تم تقديم طلب الإجازة بنجاح وهو الآن قيد المراجعة.', 'success');
       await onRefresh();
@@ -657,6 +666,24 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </div>
               </div>
               <p className="text-[11px] font-semibold text-slate-500 tabular-nums">المدة المحتسبة: {leaveDays} يوم</p>
+              {selectedLeaveCfg?.requiresAttachment && (
+                <div>
+                  <label className="block font-bold mb-1">الوثيقة الثبوتية المرفقة (مطلوبة) *</label>
+                  <select
+                    required
+                    value={leaveForm.attachmentDocumentId}
+                    onChange={(e) => setLeaveForm({ ...leaveForm, attachmentDocumentId: e.target.value })}
+                    className="w-full rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-slate-800 px-3 py-2"
+                  >
+                    <option value="">اختر وثيقة مؤرشفة (تقرير طبي / كتاب رسمي)...</option>
+                    {myDocuments.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.title} ({doc.documentNumber})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block font-bold mb-1">سبب الإجازة *</label>
                 <textarea

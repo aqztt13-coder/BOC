@@ -28,7 +28,7 @@ import {
 } from '../lib/authCrypto.ts';
 import { generateCode, todayISO, translateDbError, writeAuditLog } from '../db/repository.ts';
 import { getPermissionsForRole } from '../utils/permissions.ts';
-import type { DbAuthUser } from '../middleware/auth.ts';
+import { authenticateBearerToken, toSafeAuthUser, type DbAuthUser } from '../middleware/auth.ts';
 import type { UserRole } from '../types/hrms.ts';
 
 export const authRouter = Router();
@@ -49,6 +49,7 @@ function sanitizeUser(u: typeof users.$inferSelect) {
     photoUrl: u.photoUrl,
     role: u.role as UserRole,
     department: u.department,
+    section: u.section || '',
     oilfield: u.oilfield,
     employeeId: u.employeeId,
     isActive: u.isActive,
@@ -101,21 +102,19 @@ async function issueEmailOtp(
   };
 }
 
-// 1. Check whether Employee ID password login & BOC workspace have been initialized
+// 1. Check whether an administrator has already been initialized (no sensitive counts leaked)
 authRouter.get('/status', async (_req, res) => {
   try {
-    const [allUsers, activeEmployees] = await Promise.all([
-      db.select({ id: users.id, employeeCode: users.employeeCode, passwordHash: users.passwordHash, role: users.role }).from(users),
-      db.select({ id: employees.id }).from(employees).where(isNull(employees.deletedAt)),
-    ]);
+    const allUsers = await db
+      .select({ id: users.id, role: users.role, isActive: users.isActive })
+      .from(users);
 
-    const hasPasswordAdmin = allUsers.some(
-      (u) => Boolean(u.passwordHash) && (u.role === 'HR_ADMIN' || u.role === 'HR_MANAGER')
+    const hasAnyAdmin = allUsers.some(
+      (u) => u.isActive && (u.role === 'HR_ADMIN' || u.role === 'HR_MANAGER')
     );
 
     res.json({
-      initialized: hasPasswordAdmin,
-      employeeCount: activeEmployees.length,
+      initialized: hasAnyAdmin,
     });
   } catch (error) {
     const mapped = translateDbError(error, 'تعذر التحقق من حالة تهيئة النظام.');
@@ -123,7 +122,7 @@ authRouter.get('/status', async (_req, res) => {
   }
 });
 
-// 2. First-Run One-Time HR Admin Setup + Optional Basra Oil Company Realistic Dataset
+// 2. One-Time First-Run HR Admin Setup (strictly locked once ANY HR_ADMIN exists, unless caller is an authenticated HR_ADMIN)
 authRouter.post('/bootstrap-workspace', async (req, res) => {
   const schema = z.object({
     hrEmployeeCode: z.string().trim().min(3).max(40).default('BOC-1000'),
@@ -146,15 +145,25 @@ authRouter.post('/bootstrap-workspace', async (req, res) => {
   const empTempPass = d.employeeInitialPassword || d.hrPassword;
 
   try {
-    // Atomic lock check: allow one-time claim only if no password-based HR_ADMIN exists yet
+    // Strict anti-takeover check: if ANY active HR_ADMIN already exists, require verified HR_ADMIN Bearer auth
     const existingUsers = await db.select().from(users);
-    const alreadyClaimed = existingUsers.some(
-      (u) => Boolean(u.passwordHash) && (u.role === 'HR_ADMIN' || u.role === 'HR_MANAGER')
+    const hasExistingAdmin = existingUsers.some(
+      (u) => u.isActive && (u.role === 'HR_ADMIN' || u.role === 'HR_MANAGER')
     );
-    if (alreadyClaimed) {
-      return res.status(409).json({
-        error: 'تمت تهيئة حساب مدير الموارد البشرية مسبقاً. يرجى تسجيل الدخول بالرقم الوظيفي وكلمة المرور.',
-      });
+    if (hasExistingAdmin) {
+      const authHeader = req.headers.authorization;
+      const bearer = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length).trim() : '';
+      if (!bearer) {
+        return res.status(403).json({
+          error: 'تمت تهيئة مدير النظام مسبقاً. لا يمكن إنشاء حساب إداري بدون مصادقة مدير النظام.',
+        });
+      }
+      const authResult = await authenticateBearerToken(bearer);
+      if (!authResult.ok || authResult.dbUser.role !== 'HR_ADMIN') {
+        return res.status(403).json({
+          error: 'يتطلب هذا الإجراء صلاحية مدير النظام (HR_ADMIN) المصادق عليه.',
+        });
+      }
     }
 
     const today = todayISO();
@@ -703,6 +712,20 @@ authRouter.post('/bootstrap-workspace', async (req, res) => {
           });
         }
       }
+      if (createdHrUser) {
+        await writeAuditLog(
+          {
+            actor: toSafeAuthUser(createdHrUser),
+            operation: 'INITIALIZE_WORKSPACE',
+            recordType: 'SYSTEM',
+            recordId: createdHrUser.id,
+            details: `تهيئة النظام وإعداد حساب مدير الموارد البشرية (${createdHrUser.employeeCode})${
+              d.includeSampleBocData ? ' مع بيانات حقول شركة نفط البصرة' : ''
+            }`,
+          },
+          tx
+        );
+      }
     });
 
     if (!createdHrUser) {
@@ -714,16 +737,6 @@ authRouter.post('/bootstrap-workspace', async (req, res) => {
       uid: finalHr.uid,
       role: finalHr.role,
       tv: finalHr.tokenVersion,
-    });
-
-    await writeAuditLog({
-      actor: finalHr as DbAuthUser,
-      operation: 'INITIALIZE_WORKSPACE',
-      recordType: 'SYSTEM',
-      recordId: finalHr.id,
-      details: `تهيئة النظام وإعداد حساب مدير الموارد البشرية (${finalHr.employeeCode})${
-        d.includeSampleBocData ? ' مع بيانات حقول شركة نفط البصرة' : ''
-      }`,
     });
 
     res.status(201).json({
@@ -880,44 +893,54 @@ authRouter.post('/reset-password', async (req, res) => {
 
   const code = parsed.data.employeeCode.toUpperCase();
   try {
-    const [user] = await db.select().from(users).where(eq(users.employeeCode, code)).limit(1);
-    if (!user || !user.isActive) {
-      return res.status(404).json({ error: 'الحساب غير موجود أو معطل.' });
-    }
+    const updatedUser = await db.transaction(async (tx) => {
+      const [lockedUser] = await tx
+        .select()
+        .from(users)
+        .where(eq(users.employeeCode, code))
+        .for('update')
+        .limit(1);
 
-    const [latestOtp] = await db
-      .select()
-      .from(passwordResetOtps)
-      .where(and(eq(passwordResetOtps.userId, user.id), isNull(passwordResetOtps.usedAt)))
-      .orderBy(desc(passwordResetOtps.createdAt))
-      .limit(1);
+      if (!lockedUser || !lockedUser.isActive) {
+        throw Object.assign(new Error('الحساب غير موجود أو معطل.'), { status: 404 });
+      }
 
-    if (!latestOtp) {
-      return res.status(400).json({ error: 'لا يوجد رمز تحقق صالح. يرجى طلب رمز جديد.' });
-    }
-    if (latestOtp.expiresAt.getTime() < Date.now()) {
-      return res.status(400).json({ error: 'انتهت صلاحية رمز التحقق (10 دقائق). يرجى طلب رمز جديد.' });
-    }
-    if (latestOtp.attempts >= 5) {
-      return res.status(429).json({ error: 'تم تجاوز الحد المسموح به للمحاولات. يرجى طلب رمز تحقق جديد.' });
-    }
+      const [latestOtp] = await tx
+        .select()
+        .from(passwordResetOtps)
+        .where(and(eq(passwordResetOtps.userId, lockedUser.id), isNull(passwordResetOtps.usedAt)))
+        .orderBy(desc(passwordResetOtps.createdAt))
+        .for('update')
+        .limit(1);
 
-    if (!verifyOtpHash(parsed.data.otpCode, code, latestOtp.otpHash)) {
-      await db
-        .update(passwordResetOtps)
-        .set({ attempts: latestOtp.attempts + 1 })
-        .where(eq(passwordResetOtps.id, latestOtp.id));
-      return res.status(400).json({ error: 'رمز التحقق غير صحيح. يرجى مراجعة البريد الإلكتروني والمحاولة مجدداً.' });
-    }
+      if (!latestOtp) {
+        throw Object.assign(new Error('لا يوجد رمز تحقق صالح. يرجى طلب رمز جديد.'), { status: 400 });
+      }
+      if (latestOtp.expiresAt.getTime() < Date.now()) {
+        throw Object.assign(new Error('انتهت صلاحية رمز التحقق (10 دقائق). يرجى طلب رمز جديد.'), { status: 400 });
+      }
+      if (latestOtp.attempts >= 5) {
+        throw Object.assign(new Error('تم تجاوز الحد المسموح به للمحاولات. يرجى طلب رمز تحقق جديد.'), { status: 429 });
+      }
 
-    const nextVersion = (user.tokenVersion || 1) + 1;
-    const [updatedUser] = await db.transaction(async (tx) => {
+      if (!verifyOtpHash(parsed.data.otpCode, code, latestOtp.otpHash)) {
+        await tx
+          .update(passwordResetOtps)
+          .set({ attempts: latestOtp.attempts + 1 })
+          .where(eq(passwordResetOtps.id, latestOtp.id));
+        throw Object.assign(
+          new Error('رمز التحقق غير صحيح. يرجى مراجعة البريد الإلكتروني والمحاولة مجدداً.'),
+          { status: 400 }
+        );
+      }
+
+      const nextVersion = (lockedUser.tokenVersion || 1) + 1;
       await tx
         .update(passwordResetOtps)
         .set({ usedAt: new Date() })
         .where(eq(passwordResetOtps.id, latestOtp.id));
 
-      return tx
+      const [savedUser] = await tx
         .update(users)
         .set({
           passwordHash: hashPassword(parsed.data.newPassword),
@@ -925,8 +948,21 @@ authRouter.post('/reset-password', async (req, res) => {
           tokenVersion: nextVersion,
           updatedAt: new Date(),
         })
-        .where(eq(users.id, user.id))
+        .where(eq(users.id, lockedUser.id))
         .returning();
+
+      await writeAuditLog(
+        {
+          actor: toSafeAuthUser(savedUser),
+          operation: 'PASSWORD_RESET_COMPLETED',
+          recordType: 'AUTH',
+          recordId: savedUser.id,
+          details: `تعيين كلمة مرور شخصية جديدة بنجاح بعد التحقق بالبريد الإلكتروني للرقم الوظيفي (${code})`,
+        },
+        tx
+      );
+
+      return savedUser;
     });
 
     const token = signSessionToken({
@@ -934,14 +970,6 @@ authRouter.post('/reset-password', async (req, res) => {
       uid: updatedUser.uid,
       role: updatedUser.role,
       tv: updatedUser.tokenVersion,
-    });
-
-    await writeAuditLog({
-      actor: updatedUser as DbAuthUser,
-      operation: 'PASSWORD_RESET_COMPLETED',
-      recordType: 'AUTH',
-      recordId: updatedUser.id,
-      details: `تعيين كلمة مرور شخصية جديدة بنجاح بعد التحقق بالبريد الإلكتروني للرقم الوظيفي (${code})`,
     });
 
     res.json({

@@ -119,3 +119,31 @@ test('RBAC permission matrix enforces strict role boundaries', () => {
   assert.equal(hasPermission('EMPLOYEE', 'create_employee'), false);
   assert.equal(hasPermission('READ_ONLY', 'edit_employee'), false);
 });
+
+test('default HR rules are marked draft and block official workflow initiation until approved', async () => {
+  const { canRunOfficialHRCalculation, validateHRRulesConfig, todayBaghdadISO } = await import('./hrEngine.ts');
+  assert.equal(DEFAULT_HR_RULES.rulesApproved, false);
+  const draftCheck = canRunOfficialHRCalculation(DEFAULT_HR_RULES);
+  assert.equal(draftCheck.allowed, false);
+
+  const approvedRules: HRRulesConfig = {
+    ...DEFAULT_HR_RULES,
+    rulesApproved: true,
+    regulationReference: 'قانون رواتب موظفي الدولة رقم 22 لسنة 2008',
+  };
+  assert.equal(canRunOfficialHRCalculation(approvedRules).allowed, true);
+
+  const invalidRules: HRRulesConfig = {
+    ...approvedRules,
+    incrementCycleMonths: 0,
+    retirementAgeYears: 20,
+  };
+  const validation = validateHRRulesConfig(invalidRules);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.length >= 2);
+  assert.equal(canRunOfficialHRCalculation(invalidRules).allowed, false);
+
+  // Baghdad UTC+3 date boundary check: 2026-05-01T21:30:00Z is already 2026-05-02 in Asia/Baghdad
+  const baghdadDate = todayBaghdadISO(new Date('2026-05-01T21:30:00Z'));
+  assert.equal(baghdadDate, '2026-05-02');
+});

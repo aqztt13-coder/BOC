@@ -55,6 +55,7 @@ export const users = pgTable('users', {
   tokenVersion: integer('token_version').notNull().default(1),
   role: text('role').notNull().default('EMPLOYEE'), // HR_ADMIN | HR_MANAGER | DEPT_MANAGER | SECTION_MANAGER | EMPLOYEE | READ_ONLY
   department: text('department').notNull().default(''),
+  section: text('section').notNull().default(''),
   oilfield: text('oilfield').notNull().default(''),
   employeeId: integer('employee_id').references(() => employees.id, { onDelete: 'set null' }),
   isActive: boolean('is_active').notNull().default(true),
@@ -156,6 +157,7 @@ export const transactions = pgTable('transactions', {
   rejectionReason: text('rejection_reason'),
   escalated: boolean('escalated').notNull().default(false),
   completedAt: timestamp('completed_at'),
+  executedAt: timestamp('executed_at'),
   createdByUid: text('created_by_uid').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -179,6 +181,9 @@ export const documents = pgTable('documents', {
   mimeType: text('mime_type').notNull().default('application/pdf'),
   fileSize: text('file_size').notNull().default('0 KB'),
   fileContentBase64: text('file_content_base64'),
+  storageKey: text('storage_key'),
+  sha256Hash: text('sha256_hash'),
+  confidentialityLevel: text('confidentiality_level').notNull().default('INTERNAL'), // PUBLIC | INTERNAL | CONFIDENTIAL | HR_ONLY
   version: integer('version').notNull().default(1),
   archiveStatus: text('archive_status').notNull().default('نشط'), // نشط | مؤرشف | منتهي الصلاحية
   verificationCode: text('verification_code').notNull().unique(),
@@ -244,6 +249,7 @@ export const leaveRequests = pgTable('leave_requests', {
   days: integer('days').notNull(),
   reason: text('reason').notNull(),
   status: text('status').notNull().default('بانتظار موافقة القسم'),
+  attachmentDocumentId: integer('attachment_document_id').references(() => documents.id, { onDelete: 'set null' }),
   rejectionReason: text('rejection_reason'),
   approvedBy: text('approved_by'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -261,6 +267,7 @@ export const notifications = pgTable('notifications', {
   entityType: text('entity_type').default(''),
   entityId: integer('entity_id'),
   isRead: boolean('is_read').notNull().default(false),
+  readByUids: jsonb('read_by_uids').notNull().default([]),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

@@ -143,7 +143,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 }
 
 export const authApi = {
-  status: () => publicFetch<{ initialized: boolean; employeeCount: number }>('/api/auth/status'),
+  status: () => publicFetch<{ initialized: boolean }>('/api/auth/status'),
 
   bootstrapWorkspace: (payload: {
     hrEmployeeCode: string;
@@ -199,8 +199,49 @@ export const authApi = {
   },
 };
 
+export interface ServerVerificationResult {
+  verified: boolean;
+  recordType: 'DOCUMENT' | 'APPRECIATION' | 'TRANSACTION';
+  verificationCode: string;
+  referenceNumber: string;
+  title: string;
+  category: string;
+  issueDate: string;
+  issuingAuthority: string;
+  status: string;
+  sha256Prefix: string | null;
+  verifiedAtBaghdad: string;
+  legalNotice: string;
+}
+
 export const hrmsApi = {
   bootstrap: () => apiFetch<BootstrapResponse>('/api/bootstrap'),
+
+  verifyDocumentCode: (code: string) =>
+    publicFetch<ServerVerificationResult>(`/api/verify/${encodeURIComponent(code)}`),
+
+  listEmployees: (params?: { page?: number; limit?: number; q?: string; department?: string; oilfield?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.q) qs.set('q', params.q);
+    if (params?.department) qs.set('department', params.department);
+    if (params?.oilfield) qs.set('oilfield', params.oilfield);
+    if (params?.status) qs.set('status', params.status);
+    return apiFetch<{ items: EmployeeRecord[]; total: number; page: number; limit: number; totalPages: number }>(
+      `/api/employees?${qs.toString()}`
+    );
+  },
+
+  listAuditLogs: (params?: { page?: number; limit?: number; operation?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.operation) qs.set('operation', params.operation);
+    return apiFetch<{ items: AuditLogRecord[]; total: number; page: number; limit: number; totalPages: number }>(
+      `/api/audit-logs?${qs.toString()}`
+    );
+  },
 
   search: (q: string) => apiFetch<GlobalSearchResult>(`/api/search?q=${encodeURIComponent(q)}`),
 
@@ -282,6 +323,7 @@ export const hrmsApi = {
     fileName?: string;
     mimeType?: string;
     fileSize?: string;
+    confidentialityLevel?: 'INTERNAL' | 'CONFIDENTIAL' | 'HR_ONLY';
     fileContentBase64?: string | null;
   }) =>
     apiFetch<DocumentRecord>('/api/documents', {
@@ -376,6 +418,7 @@ export const hrmsApi = {
     startDate: string;
     endDate: string;
     reason: string;
+    attachmentDocumentId?: number | null;
   }) =>
     apiFetch<{ leave: LeaveRequestRecord; transaction: TransactionRecord }>('/api/leaves', {
       method: 'POST',
@@ -404,6 +447,7 @@ export const hrmsApi = {
     payload: {
       role?: AppUser['role'];
       department?: string;
+      section?: string;
       oilfield?: string;
       employeeId?: number | null;
       isActive?: boolean;

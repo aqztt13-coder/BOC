@@ -51,6 +51,7 @@ export interface AppUser {
   photoUrl?: string | null;
   role: UserRole;
   department: string;
+  section?: string;
   oilfield: string;
   employeeId: number | null;
   isActive: boolean;
@@ -69,6 +70,10 @@ export interface HRRulesConfig {
   penaltyDelays: Record<string, number>; // penalty name -> delay months
   promotionSalaryIncreasePct: number;
   incrementSalaryIncreasePct: number;
+  rulesApproved?: boolean;
+  regulationReference?: string;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
 }
 
 export interface LeaveTypeConfig {
@@ -191,6 +196,8 @@ export interface DocumentRecord {
   mimeType: string;
   fileSize: string;
   hasContent?: boolean;
+  confidentialityLevel?: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'HR_ONLY';
+  sha256Hash?: string | null;
   version: number;
   archiveStatus: string;
   verificationCode: string;
@@ -223,6 +230,7 @@ export interface TransactionRecord {
   rejectionReason?: string | null;
   escalated: boolean;
   completedAt?: string | null;
+  executedAt?: string | null;
   createdByUid: string;
   createdAt: string;
   updatedAt: string;
@@ -274,6 +282,7 @@ export interface LeaveRequestRecord {
   days: number;
   reason: string;
   status: string;
+  attachmentDocumentId?: number | null;
   rejectionReason?: string | null;
   approvedBy?: string | null;
   createdAt: string;
@@ -340,5 +349,6 @@ export interface PromotionCalculationResult {
   approachingRetirement: boolean;
   retirementDate: string | null;
   progressionStatus: 'OVERDUE' | 'DUE_SOON' | 'DELAYED_BY_PENALTY' | 'ON_TRACK';
+  rulesApproved: boolean;
   explanationSteps: string[];
 }

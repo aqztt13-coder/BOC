@@ -1,12 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Printer, ShieldCheck, X } from 'lucide-react';
+import { CheckCircle2, Printer, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import type {
   AppreciationRecord,
   DocumentRecord,
   EmployeeRecord,
   TransactionRecord,
 } from '../types/hrms';
+import { hrmsApi, type ServerVerificationResult } from '../lib/api';
 import { formatIQD } from '../utils/exporters';
 
 export type OfficialPreviewTarget =
@@ -20,6 +21,10 @@ interface OfficialDocumentModalProps {
 }
 
 export const OfficialDocumentModal: React.FC<OfficialDocumentModalProps> = ({ target, onClose }) => {
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<ServerVerificationResult | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+
   if (!target) return null;
 
   const isAppreciation = target.kind === 'appreciation';
@@ -50,13 +55,22 @@ export const OfficialDocumentModal: React.FC<OfficialDocumentModalProps> = ({ ta
       ? target.record.title
       : target.record.title;
 
-  const qrPayload = JSON.stringify({
-    issuer: 'Basra Oil Company (BOC)',
-    ref: docNumber,
-    verify: verificationCode,
-    employee: emp?.employeeCode || 'N/A',
-    date: issueDate,
-  });
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const verifyUrl = `${origin}/api/verify/${encodeURIComponent(verificationCode)}`;
+
+  const handleServerVerify = async () => {
+    setVerifying(true);
+    setVerifyError(null);
+    try {
+      const res = await hrmsApi.verifyDocumentCode(verificationCode);
+      setVerifyResult(res);
+    } catch (err: unknown) {
+      setVerifyResult(null);
+      setVerifyError((err as Error).message || 'تعذر التحقق من صحة الرمز في سجل الخادم.');
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   return (
     <div
@@ -71,10 +85,19 @@ export const OfficialDocumentModal: React.FC<OfficialDocumentModalProps> = ({ ta
           <div className="flex items-center gap-2.5 min-w-0">
             <ShieldCheck className="h-5 w-5 text-[#C69214] shrink-0" aria-hidden="true" />
             <h3 id="official-doc-modal-title" className="text-sm font-bold text-slate-900 dark:text-white truncate">
-              معاينة الوثيقة الرسمية الموثقة برمز التحقق (QR)
+              معاينة الوثيقة ورمز التحقق من السجل (QR)
             </h3>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={verifying}
+              onClick={handleServerVerify}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs font-bold text-emerald-800 dark:text-emerald-300 hover:opacity-90 cursor-pointer disabled:opacity-50"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{verifying ? 'جاري التحقق...' : 'تحقق من الخادم'}</span>
+            </button>
             <button
               type="button"
               onClick={() => window.print()}
@@ -93,6 +116,28 @@ export const OfficialDocumentModal: React.FC<OfficialDocumentModalProps> = ({ ta
             </button>
           </div>
         </div>
+
+        {/* Live Server Verification Feedback */}
+        {(verifyResult || verifyError) && (
+          <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-800 text-xs print:hidden">
+            {verifyResult ? (
+              <div className="flex items-start gap-2 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-3 text-emerald-900 dark:text-emerald-200">
+                <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5 text-emerald-600" />
+                <div className="space-y-0.5">
+                  <p className="font-bold">
+                    تم التحقق من مطابقة السجل على الخادم ({verifyResult.referenceNumber} · الحالة: {verifyResult.status} · توقيت بغداد: {verifyResult.verifiedAtBaghdad})
+                  </p>
+                  <p className="text-[11px] opacity-90">{verifyResult.legalNotice}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-3 text-red-800 dark:text-red-200">
+                <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5 text-red-600" />
+                <p className="font-semibold">{verifyError}</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Printable Official Letter Sheet (Always Official White Paper) */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-8 bg-slate-100 dark:bg-slate-950 print:bg-white print:p-0">
@@ -166,7 +211,7 @@ export const OfficialDocumentModal: React.FC<OfficialDocumentModalProps> = ({ ta
                     الدرجة {emp.grade} / المرحلة {emp.step}
                   </span>
                 </div>
-                {isTxn && target.record.transactionType === 'SALARY_CERTIFICATE' && (
+                {isTxn && target.record.transactionType === 'SALARY_CERTIFICATE' && emp.basicSalaryIQD > 0 && (
                   <div>
                     <span className="text-slate-500">الراتب الاسمي: </span>
                     <span className="font-bold text-slate-900 tabular-nums">{formatIQD(emp.basicSalaryIQD)}</span>
@@ -228,17 +273,18 @@ export const OfficialDocumentModal: React.FC<OfficialDocumentModalProps> = ({ ta
               )}
             </div>
 
-            {/* Official Footer & Live QR Code */}
+            {/* Official Footer & Server-Verifiable QR Code */}
             <div className="mt-10 flex items-end justify-between gap-6 border-t border-slate-200 pt-6">
-              <div className="space-y-1 text-center">
+              <div className="space-y-1 text-right max-w-md">
                 <p className="text-xs font-bold text-[#0B1F3A]">مدير قسم الموارد البشرية</p>
                 <p className="text-xs text-slate-500">شركة نفط البصرة — وزارة النفط</p>
-                <p className="mt-4 text-[11px] text-emerald-700 font-semibold">
-                  مصدّق إلكترونياً · لا يحتاج إلى ختم ورقي عند مطابقة رمز QR
+                <p className="mt-3 text-[11px] leading-relaxed text-slate-600">
+                  التحقق الإلكتروني يؤكد وجود هذا السجل في قاعدة بيانات نظام الموارد البشرية عبر مسح رمز QR، ولا يُعد
+                  بديلاً عن التوقيع الرقمي المعتمد قانونياً (PKI) أو الختم الرسمي عند الاقتضاء.
                 </p>
               </div>
-              <div className="flex flex-col items-center gap-1.5 rounded-lg border border-slate-200 p-2.5 bg-white">
-                <QRCodeSVG value={qrPayload} size={86} level="M" />
+              <div className="flex flex-col items-center gap-1.5 rounded-lg border border-slate-200 p-2.5 bg-white shrink-0">
+                <QRCodeSVG value={verifyUrl} size={90} level="M" />
                 <span dir="ltr" className="font-mono text-[10px] text-slate-500">
                   {verificationCode}
                 </span>

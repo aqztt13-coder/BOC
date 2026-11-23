@@ -94,6 +94,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<ActiveView>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<number | null>(null);
   const [createEmployeeSignal, setCreateEmployeeSignal] = useState(0);
 
@@ -156,6 +157,7 @@ export default function App() {
       } else if (e.key === 'Escape') {
         setSearchOpen(false);
         setNotifOpen(false);
+        setMobileActionsOpen(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -521,11 +523,325 @@ export default function App() {
         </div>
       )}
 
+      {/* Mobile Slide-Over Controls Drawer (< 768px Only) */}
+      {mobileActionsOpen && (
+        <div
+          className="fixed inset-0 z-50 md:hidden flex justify-end print:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label={lang === 'ar' ? 'قائمة المستخدم والإعدادات' : 'User & Portal Menu'}
+        >
+          <div
+            className="flex-1 bg-slate-950/60 backdrop-blur-[1px]"
+            onClick={() => setMobileActionsOpen(false)}
+          />
+          <div className="w-80 max-w-[86vw] h-full bg-white dark:bg-slate-900 shadow-2xl border-s border-slate-200 dark:border-slate-800 flex flex-col">
+            {/* Drawer Top Bar */}
+            <div className="flex items-center justify-between gap-2 px-4 h-14 border-b border-slate-200 dark:border-slate-800 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0B1F3A] text-[#E5B94C] shrink-0">
+                  <Building2 className="h-4 w-4" aria-hidden="true" />
+                </div>
+                <span className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                  {t.companyName}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileActionsOpen(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                aria-label={lang === 'ar' ? 'إغلاق القائمة' : 'Close menu'}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Drawer Content */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Current Employee / User Identity Badge */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 p-3.5 space-y-1.5">
+                <p className="text-sm font-extrabold text-slate-900 dark:text-white truncate">
+                  {effectivePortal === 'employee'
+                    ? activeEmployeeForPortal?.fullName || user.displayName || user.email
+                    : user.displayName || user.email}
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  {(effectivePortal === 'employee'
+                    ? activeEmployeeForPortal?.employeeCode || user.employeeCode
+                    : user.employeeCode) && (
+                    <span
+                      dir="ltr"
+                      className="inline-flex items-center rounded-md bg-[#0B1F3A] text-[#E5B94C] px-2 py-0.5 font-mono font-bold"
+                    >
+                      {effectivePortal === 'employee'
+                        ? activeEmployeeForPortal?.employeeCode || user.employeeCode
+                        : user.employeeCode}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-0.5 font-semibold text-slate-600 dark:text-slate-300">
+                    {roleLabel}
+                  </span>
+                </div>
+              </div>
+
+              {/* HR Mobile Navigation & Global Search (when in HR Portal) */}
+              {effectivePortal === 'hr' && (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      setMobileMenuOpen(true);
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-[#0B1F3A] text-white px-3.5 py-2.5 text-xs font-bold hover:opacity-90 cursor-pointer"
+                  >
+                    <LayoutDashboard className="h-4 w-4 text-[#E5B94C] shrink-0" />
+                    <span>{lang === 'ar' ? 'قائمة أقسام النظام' : 'HR Modules Menu'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileActionsOpen(false);
+                      setSearchOpen(true);
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+                  >
+                    <Search className="h-3.5 w-3.5 text-[#C69214] shrink-0" />
+                    <span>{t.common.search}</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Portal Switcher & Employee Selector (HR Admins/Managers Only) */}
+              {canSwitchPortal && (
+                <div className="space-y-2.5 pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                    {lang === 'ar' ? 'التبديل بين البوابات' : 'Portal Switching'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPortalMode((m) => (m === 'hr' ? 'employee' : 'hr'));
+                      setMobileActionsOpen(false);
+                    }}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[#C69214] bg-[#C69214]/10 px-3 py-2.5 text-xs font-bold text-[#0B1F3A] dark:text-[#E5B94C] hover:bg-[#C69214]/20 cursor-pointer"
+                  >
+                    <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      {effectivePortal === 'hr'
+                        ? lang === 'ar'
+                          ? 'تبديل إلى بوابة الموظف'
+                          : 'Switch to Employee Portal'
+                        : lang === 'ar'
+                          ? 'العودة لبوابة الموارد البشرية'
+                          : 'Return to HR Portal'}
+                    </span>
+                  </button>
+
+                  {effectivePortal === 'employee' && data.employees.length > 0 && (
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="mobile-employee-switcher"
+                        className="block text-[11px] font-semibold text-slate-600 dark:text-slate-300"
+                      >
+                        {lang === 'ar' ? 'معاينة بوابة المنتسب:' : 'Preview Employee Portal:'}
+                      </label>
+                      <select
+                        id="mobile-employee-switcher"
+                        aria-label="اختيار المنتسب لمعاينة بوابته"
+                        value={activeEmployeeForPortal?.id ?? ''}
+                        onChange={(e) => {
+                          setPreviewEmployeeId(Number(e.target.value));
+                          setMobileActionsOpen(false);
+                        }}
+                        className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-900 dark:text-white"
+                      >
+                        {data.employees.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.fullName} ({e.employeeCode})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Quick Actions Row */}
+              <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                  {lang === 'ar' ? 'إجراءات سريعة' : 'Quick Actions'}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void fetchBootstrap();
+                      setMobileActionsOpen(false);
+                    }}
+                    disabled={loading}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin text-[#C69214]' : ''}`} />
+                    <span>{t.common.refresh}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    {theme === 'dark' ? (
+                      <Sun className="h-3.5 w-3.5 text-[#E5B94C]" />
+                    ) : (
+                      <Moon className="h-3.5 w-3.5" />
+                    )}
+                    <span>{theme === 'dark' ? t.lightMode : t.darkMode}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLang((prev) => (prev === 'ar' ? 'en' : 'ar'))}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    <Globe className="h-3.5 w-3.5 text-[#C69214]" />
+                    <span>{t.languageSwitch}</span>
+                  </button>
+
+                  <PWAInstallButton lang={lang} label={t.installApp} showLabelOnMobile className="w-full" />
+                </div>
+              </div>
+            </div>
+
+            {/* Cleanly Separated Logout Footer */}
+            <div className="border-t border-slate-200 dark:border-slate-800 p-4 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileActionsOpen(false);
+                  void handleSignOut();
+                }}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 px-4 py-2.5 text-xs font-bold text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-950/70 cursor-pointer"
+              >
+                <LogOut className="h-4 w-4" />
+                <span>{t.signOut}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Notification Popover (< 768px Only — Viewport-Fixed Outside Header Backdrop-Blur) */}
+      {notifOpen && (
+        <div className="md:hidden print:hidden">
+          <div
+            className="fixed inset-0 z-40 bg-slate-950/20"
+            onClick={() => setNotifOpen(false)}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-label={t.notifications}
+            className="fixed inset-x-3 top-[60px] max-w-sm ms-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden z-50"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-4 py-3">
+              <span className="text-xs font-bold">{t.notifications}</span>
+              {unreadNotifs > 0 && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllRead}
+                  className="text-[11px] font-semibold text-[#0B1F3A] dark:text-[#E5B94C] hover:underline cursor-pointer"
+                >
+                  {t.markAllRead}
+                </button>
+              )}
+            </div>
+            <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+              {data.notifications.length === 0 ? (
+                <p className="p-6 text-center text-xs text-slate-400">{t.noNotifications}</p>
+              ) : (
+                data.notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    type="button"
+                    onClick={() => handleMarkNotifRead(n.id, n.entityType)}
+                    className={`w-full text-start p-3.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer ${
+                      !n.isRead ? 'bg-amber-50/50 dark:bg-amber-950/20' : ''
+                    }`}
+                  >
+                    <p className="font-bold text-slate-900 dark:text-white">{n.title}</p>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">{n.message}</p>
+                    <span dir="ltr" className="font-mono text-[10px] text-slate-400 mt-1 block">
+                      {n.createdAt.slice(0, 16).replace('T', ' ')}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Shell */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Top Enterprise Header */}
-        <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-4 sm:px-6 py-3 print:hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <header className="sticky top-0 z-30 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-3 py-0 md:px-6 md:py-3 print:hidden">
+          {/* Compact Single-Row Mobile Header (< 768px · h-14 = 56px) */}
+          <div className="flex md:hidden h-14 items-center justify-between gap-2">
+            {/* Start (Right in RTL): BOC Logo + Single-Line Truncated Title */}
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0B1F3A] border border-[#C69214]/40 text-[#E5B94C] shrink-0">
+                <Building2 className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <h1 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">
+                {effectivePortal === 'employee'
+                  ? lang === 'ar'
+                    ? 'بوابة المنتسب'
+                    : 'Employee Portal'
+                  : lang === 'ar'
+                    ? 'إدارة الموارد البشرية'
+                    : 'HR Management'}
+              </h1>
+            </div>
+
+            {/* End (Left in RTL): Notification Bell + Compact Menu Toggle */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileActionsOpen(false);
+                    setNotifOpen((o) => !o);
+                  }}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+                  aria-label={t.notifications}
+                >
+                  <Bell className="h-4 w-4" />
+                  {unreadNotifs > 0 && (
+                    <span className="absolute -top-1 -end-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white tabular-nums">
+                      {unreadNotifs}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNotifOpen(false);
+                  setMobileActionsOpen(true);
+                }}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer"
+                aria-label={lang === 'ar' ? 'فتح قائمة المستخدم والإعدادات' : 'Open user menu'}
+                aria-expanded={mobileActionsOpen}
+              >
+                <Menu className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Desktop & Tablet Header (>= 768px — Preserved Unchanged) */}
+          <div className="hidden md:flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex items-center gap-3 min-w-0">
               {effectivePortal === 'hr' ? (
                 <button
@@ -848,6 +1164,7 @@ export default function App() {
                   user={user}
                   config={data.config}
                   employees={data.employees}
+                  documents={data.documents}
                   leaveRequests={data.leaveRequests}
                   onRefresh={fetchBootstrap}
                   onNotify={notify}

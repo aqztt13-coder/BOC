@@ -7,9 +7,16 @@ import type { Language } from '../types/hrms';
 interface PWAInstallButtonProps {
   lang: Language;
   label: string;
+  showLabelOnMobile?: boolean;
+  className?: string;
 }
 
-export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ lang, label }) => {
+export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
+  lang,
+  label,
+  showLabelOnMobile = false,
+  className = '',
+}) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showGuide, setShowGuide] = useState(false);
 
@@ -30,11 +37,11 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ lang, label 
       <button
         type="button"
         onClick={handleClick}
-        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-[#0B1F3A] dark:text-slate-100 transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C69214] whitespace-nowrap shrink-0"
+        className={`inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-[#0B1F3A] dark:text-slate-100 transition-colors hover:bg-slate-50 dark:hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#C69214] whitespace-nowrap shrink-0 cursor-pointer ${className}`}
         aria-label={label}
       >
-        <Download className="h-3.5 w-3.5 text-[#C69214]" aria-hidden="true" />
-        <span className="hidden sm:inline">{label}</span>
+        <Download className="h-3.5 w-3.5 text-[#C69214] shrink-0" aria-hidden="true" />
+        <span className={showLabelOnMobile ? 'inline truncate' : 'hidden sm:inline'}>{label}</span>
       </button>
 
       {showGuide && (

@@ -60,7 +60,14 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
 
   const handleUpdateUser = async (
     u: AppUser,
-    patch: { role?: UserRole; department?: string; employeeId?: number | null; isActive?: boolean }
+    patch: {
+      role?: UserRole;
+      department?: string;
+      section?: string;
+      oilfield?: string;
+      employeeId?: number | null;
+      isActive?: boolean;
+    }
   ) => {
     try {
       await hrmsApi.updateUser(u.id, patch);
@@ -184,7 +191,7 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                 <tr>
                   <th className="px-4 py-3 font-bold">المستخدم</th>
                   <th className="px-4 py-3 font-bold">الدور الوظيفي (Role)</th>
-                  <th className="px-4 py-3 font-bold">نطاق القسم</th>
+                  <th className="px-4 py-3 font-bold">نطاق القسم / الشعبة / الحقل</th>
                   <th className="px-4 py-3 font-bold">ربط بملف منتسب</th>
                   <th className="px-4 py-3 font-bold">الحالة</th>
                 </tr>
@@ -212,18 +219,47 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
                       </select>
                     </td>
                     <td className="px-4 py-3">
-                      <select
-                        value={u.department || ''}
-                        onChange={(e) => handleUpdateUser(u, { department: e.target.value })}
-                        className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 text-xs"
-                      >
-                        <option value="">جميع الأقسام</option>
-                        {config.orgCatalogs.departments.map((d) => (
-                          <option key={d} value={d}>
-                            {d}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex flex-wrap gap-1.5">
+                        <select
+                          aria-label="نطاق القسم"
+                          value={u.department || ''}
+                          onChange={(e) => handleUpdateUser(u, { department: e.target.value })}
+                          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs"
+                        >
+                          <option value="">جميع الأقسام</option>
+                          {config.orgCatalogs.departments.map((d) => (
+                            <option key={d} value={d}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="نطاق الشعبة"
+                          value={u.section || ''}
+                          onChange={(e) => handleUpdateUser(u, { section: e.target.value })}
+                          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs"
+                        >
+                          <option value="">جميع الشعب</option>
+                          {config.orgCatalogs.sections.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="نطاق الحقل"
+                          value={u.oilfield || ''}
+                          onChange={(e) => handleUpdateUser(u, { oilfield: e.target.value })}
+                          className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs"
+                        >
+                          <option value="">جميع الحقول</option>
+                          {config.orgCatalogs.oilfields.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <select
@@ -266,6 +302,51 @@ export const AdminSettingsView: React.FC<AdminSettingsViewProps> = ({
       {/* Tab 2: Configurable HR Rules */}
       {tab === 'rules' && (
         <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-5 text-xs">
+          {/* Official BOC Regulation Approval Gate */}
+          <div
+            className={`rounded-xl border p-4 space-y-3 ${
+              rulesDraft.rulesApproved
+                ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30'
+                : 'border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/30'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-extrabold text-slate-900 dark:text-white">
+                  {rulesDraft.rulesApproved
+                    ? 'حالة القواعد: ضوابط معتمدة رسمياً للعمل الفعلي'
+                    : 'حالة القواعد: مسودة استرشادية غير معتمدة رسمياً'}
+                </p>
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                  لا يسمح النظام بفتح أو تنفيذ معاملات الترفيع والعلاوات الرسمية إلا بعد مراجعة القواعد واعتمادها صراحةً من إدارة الموارد البشرية.
+                  {config.hrRules.approvedBy && config.hrRules.approvedAt && (
+                    <span className="block mt-1 font-semibold">
+                      آخر اعتماد: {config.hrRules.approvedBy} ({config.hrRules.approvedAt.slice(0, 10)})
+                    </span>
+                  )}
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 font-bold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(rulesDraft.rulesApproved)}
+                  onChange={(e) => setRulesDraft({ ...rulesDraft, rulesApproved: e.target.checked })}
+                />
+                <span>اعتماد هذه القواعد رسمياً لشركة نفط البصرة</span>
+              </label>
+            </div>
+            <div>
+              <label className="block font-bold mb-1">مرجع التعليمات والضوابط المعتمدة (رقم الكتاب / القانون)</label>
+              <input
+                type="text"
+                value={rulesDraft.regulationReference || ''}
+                onChange={(e) => setRulesDraft({ ...rulesDraft, regulationReference: e.target.value })}
+                placeholder="مثال: قانون رواتب موظفي الدولة رقم 22 لسنة 2008 وتعاميم وزارة النفط"
+                className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
+              />
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="block font-bold mb-1">دورة العلاوة السنوية (أشهر)</label>

@@ -2,12 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { CalendarDays, Download, Plus, SlidersHorizontal, X } from 'lucide-react';
 import type {
   AppUser,
+  DocumentRecord,
   EmployeeRecord,
   LeaveRequestRecord,
   SystemConfigBundle,
 } from '../types/hrms';
 import { hrmsApi } from '../lib/api';
-import { calculateDateRangeDays } from '../utils/hrEngine';
+import { calculateDateRangeDays, todayBaghdadISO } from '../utils/hrEngine';
 import { hasPermission } from '../utils/permissions';
 import { exportLeavesToExcel } from '../utils/exporters';
 
@@ -15,6 +16,7 @@ interface LeavesAndRequestsViewProps {
   user: AppUser;
   config: SystemConfigBundle;
   employees: EmployeeRecord[];
+  documents: DocumentRecord[];
   leaveRequests: LeaveRequestRecord[];
   onRefresh: () => Promise<void>;
   onNotify: (msg: string, type?: 'success' | 'error') => void;
@@ -24,6 +26,7 @@ export const LeavesAndRequestsView: React.FC<LeavesAndRequestsViewProps> = ({
   user,
   config,
   employees,
+  documents,
   leaveRequests,
   onRefresh,
   onNotify,
@@ -36,9 +39,10 @@ export const LeavesAndRequestsView: React.FC<LeavesAndRequestsViewProps> = ({
   const [form, setForm] = useState({
     employeeId: '',
     leaveType: config.orgCatalogs.leaveTypes[0]?.name || 'إجازة اعتيادية',
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
+    startDate: todayBaghdadISO(),
+    endDate: todayBaghdadISO(),
     reason: '',
+    attachmentDocumentId: '',
   });
 
   const [adjForm, setAdjForm] = useState({
@@ -49,12 +53,25 @@ export const LeavesAndRequestsView: React.FC<LeavesAndRequestsViewProps> = ({
 
   const empMap = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
   const computedDays = calculateDateRangeDays(form.startDate, form.endDate);
+  const selectedLeaveCfg = useMemo(
+    () => config.orgCatalogs.leaveTypes.find((lt) => lt.name === form.leaveType),
+    [config.orgCatalogs.leaveTypes, form.leaveType]
+  );
+  const selectedEmpIdNum = Number(form.employeeId || user.employeeId || employees[0]?.id || 0);
+  const eligibleDocs = useMemo(
+    () => documents.filter((d) => d.employeeId === selectedEmpIdNum),
+    [documents, selectedEmpIdNum]
+  );
 
   const handleSubmitLeave = async (e: React.FormEvent) => {
     e.preventDefault();
     const empId = Number(form.employeeId || user.employeeId || employees[0]?.id);
     if (!empId) {
       onNotify('يرجى تسجيل أو تحديد منتسب أولاً.', 'error');
+      return;
+    }
+    if (selectedLeaveCfg?.requiresAttachment && !form.attachmentDocumentId) {
+      onNotify(`يتطلب تقديم «${form.leaveType}» اختيار وثيقة مرفقة مؤرشفة للمنتسب.`, 'error');
       return;
     }
     setSubmitting(true);
@@ -65,14 +82,16 @@ export const LeavesAndRequestsView: React.FC<LeavesAndRequestsViewProps> = ({
         startDate: form.startDate,
         endDate: form.endDate,
         reason: form.reason,
+        attachmentDocumentId: form.attachmentDocumentId ? Number(form.attachmentDocumentId) : null,
       });
       setShowCreate(false);
       setForm({
         employeeId: '',
         leaveType: config.orgCatalogs.leaveTypes[0]?.name || 'إجازة اعتيادية',
-        startDate: new Date().toISOString().slice(0, 10),
-        endDate: new Date().toISOString().slice(0, 10),
+        startDate: todayBaghdadISO(),
+        endDate: todayBaghdadISO(),
         reason: '',
+        attachmentDocumentId: '',
       });
       onNotify('تم تقديم طلب الإجازة بنجاح وربطه بمسار الموافقات (مع التحقق من عدم التداخل).', 'success');
       await onRefresh();
@@ -152,9 +171,10 @@ export const LeavesAndRequestsView: React.FC<LeavesAndRequestsViewProps> = ({
                 setForm({
                   employeeId: String(user.employeeId || employees[0]?.id || ''),
                   leaveType: config.orgCatalogs.leaveTypes[0]?.name || 'إجازة اعتيادية',
-                  startDate: new Date().toISOString().slice(0, 10),
-                  endDate: new Date().toISOString().slice(0, 10),
+                  startDate: todayBaghdadISO(),
+                  endDate: todayBaghdadISO(),
                   reason: '',
+                  attachmentDocumentId: '',
                 });
                 setShowCreate(true);
               }}
@@ -340,6 +360,29 @@ export const LeavesAndRequestsView: React.FC<LeavesAndRequestsViewProps> = ({
               <p className="text-[11px] font-bold text-[#0B1F3A] dark:text-[#E5B94C] tabular-nums">
                 عدد الأيام المحتسبة: {computedDays} يوم
               </p>
+              {selectedLeaveCfg?.requiresAttachment && (
+                <div>
+                  <label className="block font-semibold mb-1">الوثيقة الثبوتية المرفقة (مطلوبة لهذا النوع) *</label>
+                  <select
+                    required
+                    value={form.attachmentDocumentId}
+                    onChange={(e) => setForm({ ...form, attachmentDocumentId: e.target.value })}
+                    className="w-full rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/40 dark:bg-slate-800 px-3 py-2"
+                  >
+                    <option value="">اختر وثيقة مؤرشفة للمنتسب (تقرير طبي / كتاب رسمي)...</option>
+                    {eligibleDocs.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.title} ({doc.documentNumber})
+                      </option>
+                    ))}
+                  </select>
+                  {eligibleDocs.length === 0 && (
+                    <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                      لا توجد وثائق مؤرشفة لهذا المنتسب حالياً. يرجى رفع التقرير الطبي في شاشة «الوثائق والأرشيف» أولاً.
+                    </p>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="block font-semibold mb-1">السبب *</label>
                 <textarea

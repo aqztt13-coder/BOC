@@ -8,8 +8,45 @@ import type {
   PromotionCalculationResult,
   SystemConfigBundle,
   WorkflowConfigItem,
-} from '../types/hrms';
+} from '../types/hrms.ts';
 
+export const BAGHDAD_TIMEZONE = 'Asia/Baghdad';
+
+/**
+ * Returns YYYY-MM-DD in Asia/Baghdad local time (UTC+3), preventing midnight UTC drift.
+ */
+export function todayBaghdadISO(date: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BAGHDAD_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === 'year')?.value || '2026';
+  const month = parts.find((p) => p.type === 'month')?.value || '01';
+  const day = parts.find((p) => p.type === 'day')?.value || '01';
+  return `${year}-${month}-${day}`;
+}
+
+export function formatBaghdadDateTime(date: Date | string = new Date()): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: BAGHDAD_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(d);
+}
+
+/**
+ * Provisional draft HR rules only.
+ * Explicitly marked rulesApproved: false so default values are NEVER treated as
+ * officially approved Basra Oil Company regulations until reviewed & approved by HR Admin.
+ */
 export const DEFAULT_HR_RULES: HRRulesConfig = {
   gradePromotionYears: {
     '10': 4,
@@ -36,6 +73,10 @@ export const DEFAULT_HR_RULES: HRRulesConfig = {
   },
   promotionSalaryIncreasePct: 12,
   incrementSalaryIncreasePct: 3.5,
+  rulesApproved: false,
+  regulationReference: 'مسودة قواعد استرشادية — تتطلب مراجعة واعتماد قسم الموارد البشرية',
+  approvedAt: null,
+  approvedBy: null,
 };
 
 export const DEFAULT_ORG_CATALOGS: OrgCatalogsConfig = {
@@ -92,6 +133,7 @@ export const DEFAULT_ORG_CATALOGS: OrgCatalogsConfig = {
     'أمر عقوبة إدارية',
     'شهادة دورة تدريبية',
     'مخاطبة رسمية',
+    'تقرير طبي / مرفق إجازة',
     'هوية ووثيقة تعريفية',
   ],
   trainingCategories: [
@@ -199,8 +241,98 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfigBundle = {
   workflows: DEFAULT_WORKFLOWS,
 };
 
+export function validateHRRulesConfig(rules: HRRulesConfig | null | undefined): {
+  valid: boolean;
+  errors: string[];
+} {
+  const errors: string[] = [];
+  if (!rules || typeof rules !== 'object') {
+    return { valid: false, errors: ['لم يتم تعريف قواعد الاحتساب في إعدادات النظام.'] };
+  }
+
+  for (let g = 1; g <= 10; g += 1) {
+    const val = rules.gradePromotionYears?.[String(g)];
+    if (typeof val !== 'number' || !Number.isInteger(val) || val < 0 || val > 15) {
+      errors.push(`مدة الترفيع للدرجة (${g}) غير صالحة.`);
+    }
+  }
+  if (!Number.isInteger(rules.incrementCycleMonths) || rules.incrementCycleMonths < 1 || rules.incrementCycleMonths > 36) {
+    errors.push('دورة العلاوة السنوية يجب أن تكون بين 1 و 36 شهراً.');
+  }
+  if (!Number.isInteger(rules.earlyAlertDays) || rules.earlyAlertDays < 1 || rules.earlyAlertDays > 365) {
+    errors.push('فترة التنبيه المبكر يجب أن تكون بين 1 و 365 يوماً.');
+  }
+  if (!Number.isInteger(rules.retirementAgeYears) || rules.retirementAgeYears < 45 || rules.retirementAgeYears > 75) {
+    errors.push('السن القانوني للتقاعد يجب أن يكون بين 45 و 75 عاماً.');
+  }
+  if (
+    !Number.isInteger(rules.retirementWarningMonths) ||
+    rules.retirementWarningMonths < 1 ||
+    rules.retirementWarningMonths > 60
+  ) {
+    errors.push('فترة إشعار التقاعد يجب أن تكون بين 1 و 60 شهراً.');
+  }
+  if (
+    !Number.isInteger(rules.maxSeniorityMonthsPerCycle) ||
+    rules.maxSeniorityMonthsPerCycle < 0 ||
+    rules.maxSeniorityMonthsPerCycle > 24
+  ) {
+    errors.push('سقف قِدَم كتب الشكر يجب أن يكون بين 0 و 24 شهراً.');
+  }
+  if (
+    typeof rules.promotionSalaryIncreasePct !== 'number' ||
+    rules.promotionSalaryIncreasePct < 0 ||
+    rules.promotionSalaryIncreasePct > 100
+  ) {
+    errors.push('نسبة زيادة الراتب عند الترفيع غير صالحة.');
+  }
+  if (
+    typeof rules.incrementSalaryIncreasePct !== 'number' ||
+    rules.incrementSalaryIncreasePct < 0 ||
+    rules.incrementSalaryIncreasePct > 50
+  ) {
+    errors.push('نسبة زيادة الراتب عند العلاوة غير صالحة.');
+  }
+  if (!rules.penaltyDelays || typeof rules.penaltyDelays !== 'object') {
+    errors.push('جدول تأخير العقوبات الإدارية مفقود.');
+  } else {
+    for (const [k, v] of Object.entries(rules.penaltyDelays)) {
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 36) {
+        errors.push(`مدة التأخير للعقوبة «${k}» غير صالحة.`);
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Prevents official promotion/increment workflow initiation unless HR Admin has explicitly
+ * reviewed, validated, and approved the active BOC calculation regulations.
+ */
+export function canRunOfficialHRCalculation(rules: HRRulesConfig | null | undefined): {
+  allowed: boolean;
+  reason?: string;
+} {
+  const check = validateHRRulesConfig(rules);
+  if (!check.valid) {
+    return {
+      allowed: false,
+      reason: `قواعد الاحتساب غير صالحة: ${check.errors[0]}`,
+    };
+  }
+  if (!rules?.rulesApproved) {
+    return {
+      allowed: false,
+      reason:
+        'لا يمكن فتح معاملة ترفيع أو علاوة رسمية قبل مراجعة واعتماد ضوابط الاحتساب الرسمية لشركة نفط البصرة من لوحة الإدارة والإعدادات.',
+    };
+  }
+  return { allowed: true };
+}
+
 export function getPromotionYearsForGrade(grade: number, rules: HRRulesConfig = DEFAULT_HR_RULES): number {
-  const configured = rules.gradePromotionYears[String(grade)];
+  const configured = rules.gradePromotionYears?.[String(grade)];
   if (typeof configured === 'number' && configured >= 0) {
     return configured;
   }
@@ -210,7 +342,7 @@ export function getPromotionYearsForGrade(grade: number, rules: HRRulesConfig = 
 }
 
 export function getPenaltyDelayMonths(penaltyType: string, rules: HRRulesConfig = DEFAULT_HR_RULES): number {
-  const configured = rules.penaltyDelays[penaltyType];
+  const configured = rules.penaltyDelays?.[penaltyType];
   if (typeof configured === 'number' && configured >= 0) {
     return configured;
   }
@@ -239,7 +371,7 @@ export function daysBetweenISO(fromISO: string, toISO: string): number {
 
 export function calculateRetirementInfo(
   birthDate: string | null | undefined,
-  referenceDateISO: string,
+  referenceDateISO: string = todayBaghdadISO(),
   rules: HRRulesConfig = DEFAULT_HR_RULES
 ): { retirementDate: string | null; approachingRetirement: boolean } {
   if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
@@ -258,9 +390,10 @@ export function calculateEmployeeProgression(
   employee: EmployeeRecord,
   appreciations: AppreciationRecord[],
   penalties: PenaltyRecordItem[],
-  referenceDateISO: string,
+  referenceDateISO: string = todayBaghdadISO(),
   rules: HRRulesConfig = DEFAULT_HR_RULES
 ): PromotionCalculationResult {
+  const rulesApproved = Boolean(rules.rulesApproved) && validateHRRulesConfig(rules).valid;
   const gradeYearsRequired = getPromotionYearsForGrade(employee.grade, rules);
   const baseIncrementDate = addMonthsISO(employee.lastIncrementDate, rules.incrementCycleMonths);
   const basePromotionDate =
@@ -312,9 +445,12 @@ export function calculateEmployeeProgression(
     rules
   );
 
-  // Transparent calculation breakdown
+  // Transparent calculation breakdown (Asia/Baghdad reference date + approval status)
   const explanationSteps: string[] = [
-    `الدرجة الحالية (${employee.grade}) / المرحلة (${employee.step}) — مدة البقاء المعتمدة للترفيع وفق إعدادات النظام: ${
+    rulesApproved
+      ? `حالة الضوابط: معتمدة رسمياً (${rules.regulationReference || 'ضوابط الموارد البشرية المعتمدة'}) · تاريخ الاحتساب المرجعي (توقيت بغداد): ${referenceDateISO}.`
+      : `تنبيه: الاحتساب استرشادي أولي (القواعد غير معتمدة رسمياً بعد في إعدادات النظام) · تاريخ الاحتساب المرجعي (توقيت بغداد): ${referenceDateISO}.`,
+    `الدرجة الحالية (${employee.grade}) / المرحلة (${employee.step}) — مدة البقاء للترفيع: ${
       gradeYearsRequired > 0 ? `${gradeYearsRequired} سنوات` : 'أعلى درجة وظيفية (الدرجة الأولى)'
     }.`,
     `تاريخ العلاوة الأساسي (${rules.incrementCycleMonths} شهراً من ${employee.lastIncrementDate}): ${baseIncrementDate}.`,
@@ -369,6 +505,7 @@ export function calculateEmployeeProgression(
     approachingRetirement,
     retirementDate,
     progressionStatus,
+    rulesApproved,
     explanationSteps,
   };
 }
@@ -383,6 +520,7 @@ export function hasOverlappingLeave(
     (lv) =>
       lv.employeeId === employeeId &&
       lv.status !== 'مرفوض' &&
+      lv.status !== 'مؤرشف' &&
       lv.startDate <= endDate &&
       lv.endDate >= startDate
   );

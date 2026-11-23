@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import type {
   AppreciationRecord,
   DocumentRecord,
@@ -10,15 +10,55 @@ import type {
   TrainingEnrollmentRecord,
   TransactionRecord,
 } from '../types/hrms';
-import { calculateEmployeeProgression, DEFAULT_HR_RULES } from './hrEngine';
+import { calculateEmployeeProgression, DEFAULT_HR_RULES, todayBaghdadISO } from './hrEngine';
 
-function downloadWorksheet(rows: Record<string, unknown>[], sheetName: string, fileName: string) {
+async function downloadWorksheet(
+  rows: Record<string, unknown>[],
+  sheetName: string,
+  fileName: string
+): Promise<void> {
   const safeRows = rows.length > 0 ? rows : [{ ملاحظة: 'لا توجد سجلات مطابقة لمعايير التصفية الحالية' }];
-  const ws = XLSX.utils.json_to_sheet(safeRows);
-  ws['!views'] = [{ RTL: true }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
-  XLSX.writeFile(wb, fileName);
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Basra Oil Company HRMS';
+  workbook.created = new Date();
+
+  const worksheet = workbook.addWorksheet(sheetName.slice(0, 31), {
+    views: [{ rightToLeft: true }],
+  });
+
+  const headers = Object.keys(safeRows[0]);
+  worksheet.columns = headers.map((header) => ({
+    header,
+    key: header,
+    width: Math.min(42, Math.max(16, header.length + 8)),
+  }));
+
+  const headerRow = worksheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF0B1F3A' },
+  };
+  headerRow.alignment = { vertical: 'middle', horizontal: 'right' };
+
+  for (const row of safeRows) {
+    const added = worksheet.addRow(row);
+    added.alignment = { vertical: 'middle', horizontal: 'right' };
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function exportGenericReportToExcel(
@@ -26,8 +66,8 @@ export function exportGenericReportToExcel(
   sheetName: string,
   filePrefix: string
 ) {
-  const stamp = new Date().toISOString().slice(0, 10);
-  downloadWorksheet(rows, sheetName, `BOC_${filePrefix}_${stamp}.xlsx`);
+  const stamp = todayBaghdadISO();
+  void downloadWorksheet(rows, sheetName, `BOC_${filePrefix}_${stamp}.xlsx`);
 }
 
 export function exportEmployeesToExcel(employees: EmployeeRecord[]) {

@@ -17,7 +17,7 @@ import type {
   PromotionCalculationResult,
   SystemConfigBundle,
 } from '../types/hrms';
-import { calculateEmployeeProgression } from '../utils/hrEngine';
+import { calculateEmployeeProgression, todayBaghdadISO } from '../utils/hrEngine';
 import { exportPromotionsToExcel } from '../utils/exporters';
 import { hasPermission } from '../utils/permissions';
 import { hrmsApi } from '../lib/api';
@@ -48,7 +48,8 @@ export const PromotionsView: React.FC<PromotionsViewProps> = ({
   const [inspectRow, setInspectRow] = useState<{ emp: EmployeeRecord; calc: PromotionCalculationResult } | null>(null);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayISO = useMemo(() => todayBaghdadISO(), []);
+  const rulesApproved = Boolean(config.hrRules.rulesApproved);
 
   const rows = useMemo(() => {
     return employees
@@ -90,6 +91,30 @@ export const PromotionsView: React.FC<PromotionsViewProps> = ({
 
   return (
     <div className="space-y-5">
+      {!rulesApproved && (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+            <div>
+              <p className="font-extrabold">تنبيه: قواعد الاحتساب الحالية قيد المسودة الاسترشادية</p>
+              <p className="mt-0.5 leading-relaxed">
+                النتائج المعروضة أدناه استرشادية فقط ولا يمكن فتح معاملات ترفيع أو علاوة رسمية حتى يقوم مدير الموارد
+                البشرية بمراجعة واعتماد ضوابط شركة نفط البصرة الرسمية من شاشة الإعدادات.
+              </p>
+            </div>
+          </div>
+          {hasPermission(user.role, 'manage_settings') && (
+            <button
+              type="button"
+              onClick={() => onNavigate('admin')}
+              className="rounded-lg bg-amber-600 px-3.5 py-2 font-bold text-white shrink-0 cursor-pointer hover:opacity-90"
+            >
+              مراجعة واعتماد القواعد
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Configurable Rules Banner */}
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
@@ -265,9 +290,9 @@ export const PromotionsView: React.FC<PromotionsViewProps> = ({
                           <>
                             <button
                               type="button"
-                              disabled={submittingId === `INCREMENT_REVIEW-${emp.id}`}
+                              disabled={!rulesApproved || submittingId === `INCREMENT_REVIEW-${emp.id}`}
                               onClick={() => handleInitiateReview(emp, calc, 'INCREMENT_REVIEW')}
-                              className="inline-flex items-center gap-1 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/40 px-2.5 py-1 text-[11px] font-bold text-teal-800 dark:text-teal-300 hover:opacity-90 cursor-pointer"
+                              className="inline-flex items-center gap-1 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/40 px-2.5 py-1 text-[11px] font-bold text-teal-800 dark:text-teal-300 hover:opacity-90 cursor-pointer disabled:opacity-40"
                             >
                               <Send className="h-3 w-3" />
                               <span>معاملة علاوة</span>
@@ -275,9 +300,9 @@ export const PromotionsView: React.FC<PromotionsViewProps> = ({
                             {emp.grade > 1 && (
                               <button
                                 type="button"
-                                disabled={submittingId === `PROMOTION_REVIEW-${emp.id}`}
+                                disabled={!rulesApproved || submittingId === `PROMOTION_REVIEW-${emp.id}`}
                                 onClick={() => handleInitiateReview(emp, calc, 'PROMOTION_REVIEW')}
-                                className="inline-flex items-center gap-1 rounded-lg bg-[#0B1F3A] dark:bg-[#C69214] px-2.5 py-1 text-[11px] font-bold text-white dark:text-slate-950 hover:opacity-90 cursor-pointer"
+                                className="inline-flex items-center gap-1 rounded-lg bg-[#0B1F3A] dark:bg-[#C69214] px-2.5 py-1 text-[11px] font-bold text-white dark:text-slate-950 hover:opacity-90 cursor-pointer disabled:opacity-40"
                               >
                                 <Send className="h-3 w-3" />
                                 <span>معاملة ترفيع</span>
