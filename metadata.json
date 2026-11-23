@@ -1,0 +1,6 @@
+{
+  "name": "نظام الموارد البشرية - شركة نفط البصرة",
+  "description": "نظام إدارة الموارد البشرية المتكامل لشركة نفط البصرة (BOC HRMS) — تطبيق ويب تقدمي لإدارة الملاكات، الترفيعات والعلاوات، كتب الشكر والعقوبات، الدورات التدريبية، والإجازات.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
