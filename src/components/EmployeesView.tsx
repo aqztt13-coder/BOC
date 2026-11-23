@@ -88,6 +88,9 @@ const EMPTY_FORM = {
   sickLeaveBalance: 30,
   status: 'نشط',
   notes: '',
+  provisionAccount: true,
+  initialPassword: '',
+  accountRole: 'EMPLOYEE' as 'EMPLOYEE' | 'DEPT_MANAGER' | 'HR_MANAGER' | 'SECTION_MANAGER',
 };
 
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
@@ -234,6 +237,9 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       sickLeaveBalance: emp.sickLeaveBalance,
       status: emp.status,
       notes: emp.notes || '',
+      provisionAccount: false,
+      initialPassword: '',
+      accountRole: 'EMPLOYEE',
     });
     setShowFormModal(true);
   };
@@ -1132,6 +1138,53 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                   className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2"
                 />
               </div>
+
+              {!editingEmployee && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-4 space-y-3">
+                  <label className="flex items-center gap-2 font-bold text-slate-900 dark:text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.provisionAccount}
+                      onChange={(e) => setForm({ ...form, provisionAccount: e.target.checked })}
+                    />
+                    <span>تفعيل حساب دخول للبوابة بالرقم الوظيفي + كلمة مرور أولية (إلزام التغيير عبر البريد)</span>
+                  </label>
+                  {form.provisionAccount && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-semibold mb-1">كلمة المرور الأولية (8+ أحرف) *</label>
+                        <input
+                          type="password"
+                          required
+                          minLength={8}
+                          placeholder="تُسلّم للمنتسب للدخول الأول فقط"
+                          value={form.initialPassword}
+                          onChange={(e) => setForm({ ...form, initialPassword: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1">صلاحية الحساب (Role)</label>
+                        <select
+                          value={form.accountRole}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              accountRole: e.target.value as 'EMPLOYEE' | 'DEPT_MANAGER' | 'HR_MANAGER' | 'SECTION_MANAGER',
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
+                        >
+                          <option value="EMPLOYEE">موظف (بوابة الخدمة الذاتية)</option>
+                          <option value="SECTION_MANAGER">مدير شعبة</option>
+                          <option value="DEPT_MANAGER">مدير قسم / هيئة</option>
+                          <option value="HR_MANAGER">منتسب / مدير الموارد البشرية</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button

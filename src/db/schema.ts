@@ -45,10 +45,14 @@ export const employees = pgTable('employees', {
 // 2. Application Users & RBAC Identity
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
-  uid: text('uid').notNull().unique(), // Firebase Auth UID
+  uid: text('uid').notNull().unique(), // Firebase Auth UID or local BOC UID
+  employeeCode: text('employee_code'), // Unique Employee ID for direct BOC login (enforced in app logic)
   email: text('email').notNull().unique(),
   displayName: text('display_name').notNull().default(''),
   photoUrl: text('photo_url'),
+  passwordHash: text('password_hash'), // scrypt salt:hash for Employee ID login
+  mustResetPassword: boolean('must_reset_password').notNull().default(false),
+  tokenVersion: integer('token_version').notNull().default(1),
   role: text('role').notNull().default('EMPLOYEE'), // HR_ADMIN | HR_MANAGER | DEPT_MANAGER | SECTION_MANAGER | EMPLOYEE | READ_ONLY
   department: text('department').notNull().default(''),
   oilfield: text('oilfield').notNull().default(''),
@@ -56,6 +60,22 @@ export const users = pgTable('users', {
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// 2b. Email Verification OTPs for First-Time Login & Password Reset
+export const passwordResetOtps = pgTable('password_reset_otps', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  employeeCode: text('employee_code').notNull(),
+  email: text('email').notNull(),
+  otpHash: text('otp_hash').notNull(),
+  purpose: text('purpose').notNull().default('FIRST_LOGIN'), // FIRST_LOGIN | FORGOT_PASSWORD
+  attempts: integer('attempts').notNull().default(0),
+  expiresAt: timestamp('expires_at').notNull(),
+  usedAt: timestamp('used_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 // 3. System Settings & Configurable HR Rules (No Hardcoded Policies)

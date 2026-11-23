@@ -40,6 +40,7 @@ import {
   getPenaltyDelayMonths,
   hasOverlappingLeave,
 } from '../utils/hrEngine.ts';
+import { hashPassword } from '../lib/authCrypto.ts';
 import type { TransactionHistoryStep } from '../types/hrms.ts';
 
 export const apiRouter = Router();
@@ -237,7 +238,24 @@ apiRouter.get('/bootstrap', async (req: AuthRequest, res) => {
         ? db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(250)
         : Promise.resolve([]),
       hasPermission(user.role, 'manage_users')
-        ? db.select().from(users).orderBy(desc(users.createdAt))
+        ? db
+            .select({
+              id: users.id,
+              uid: users.uid,
+              employeeCode: users.employeeCode,
+              email: users.email,
+              displayName: users.displayName,
+              photoUrl: users.photoUrl,
+              role: users.role,
+              department: users.department,
+              oilfield: users.oilfield,
+              employeeId: users.employeeId,
+              isActive: users.isActive,
+              mustResetPassword: users.mustResetPassword,
+              createdAt: users.createdAt,
+            })
+            .from(users)
+            .orderBy(desc(users.createdAt))
         : Promise.resolve([]),
       hasPermission(user.role, 'manage_backups')
         ? db.select().from(backupSnapshots).orderBy(desc(backupSnapshots.createdAt)).limit(50)
@@ -393,6 +411,12 @@ const employeeCreateSchema = z.object({
   sickLeaveBalance: z.coerce.number().int().min(0).max(365).default(30),
   status: z.string().trim().default('نشط'),
   notes: z.string().max(2000).optional().default(''),
+  provisionAccount: z.boolean().optional().default(false),
+  initialPassword: z.string().max(128).optional().default(''),
+  accountRole: z
+    .enum(['HR_ADMIN', 'HR_MANAGER', 'DEPT_MANAGER', 'SECTION_MANAGER', 'EMPLOYEE', 'READ_ONLY'])
+    .optional()
+    .default('EMPLOYEE'),
 });
 
 apiRouter.post('/employees', requirePermission('create_employee'), async (req: AuthRequest, res) => {
@@ -400,8 +424,18 @@ apiRouter.post('/employees', requirePermission('create_employee'), async (req: A
   if (!parsed.success) {
     return res.status(400).json({ error: 'بيانات المنتسب غير مكتملة أو غير صالحة.', issues: parsed.error.issues });
   }
-  const d = parsed.data;
+  const { provisionAccount, initialPassword, accountRole, ...d } = parsed.data;
   const normalizedCode = d.employeeCode.toUpperCase();
+
+  if (provisionAccount) {
+    if (!d.email || !d.email.includes('@')) {
+      return res.status(400).json({ error: 'لتفعيل حساب الدخول الأولي يجب إدخال بريد إلكتروني رسمي للمنتسب.' });
+    }
+    if (!initialPassword || initialPassword.length < 8) {
+      return res.status(400).json({ error: 'كلمة المرور الأولية يجب أن لا تقل عن 8 أحرف.' });
+    }
+  }
+
   try {
     const existing = await db
       .select({ id: employees.id })
@@ -424,6 +458,25 @@ apiRouter.post('/employees', requirePermission('create_employee'), async (req: A
       })
       .returning();
 
+    if (provisionAccount) {
+      await db
+        .insert(users)
+        .values({
+          uid: `boc-emp-${normalizedCode.toLowerCase()}`,
+          employeeCode: normalizedCode,
+          email: d.email.toLowerCase(),
+          displayName: created.fullName,
+          passwordHash: hashPassword(initialPassword),
+          mustResetPassword: true,
+          role: accountRole,
+          department: created.department,
+          oilfield: created.oilfield,
+          employeeId: created.id,
+          isActive: true,
+        })
+        .onConflictDoNothing();
+    }
+
     await addCareerEvent({
       employeeId: created.id,
       eventType: 'تعيين',
@@ -439,8 +492,15 @@ apiRouter.post('/employees', requirePermission('create_employee'), async (req: A
       operation: 'CREATE',
       recordType: 'EMPLOYEE',
       recordId: created.id,
-      newValues: { employeeCode: created.employeeCode, fullName: created.fullName, department: created.department },
-      details: `تسجيل منتسب جديد: ${created.fullName} (${created.employeeCode}) في ${created.department}`,
+      newValues: {
+        employeeCode: created.employeeCode,
+        fullName: created.fullName,
+        department: created.department,
+        accountProvisioned: provisionAccount,
+      },
+      details: `تسجيل منتسب جديد: ${created.fullName} (${created.employeeCode}) في ${created.department}${
+        provisionAccount ? ' مع تفعيل حساب دخول بكلمة مرور أولية' : ''
+      }`,
     });
 
     res.status(201).json(created);

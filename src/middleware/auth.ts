@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 import { count, eq } from 'drizzle-orm';
 import { adminAuth } from '../lib/firebase-admin.ts';
+import { verifySessionToken } from '../lib/authCrypto.ts';
 import { db } from '../db/index.ts';
 import { users } from '../db/schema.ts';
 import { getPermissionsForRole, hasPermission } from '../utils/permissions.ts';
@@ -12,6 +13,7 @@ const INITIAL_OWNER_EMAIL = 'ddzek258@gmail.com';
 export interface DbAuthUser {
   id: number;
   uid: string;
+  employeeCode: string | null;
   email: string;
   displayName: string;
   photoUrl: string | null;
@@ -20,6 +22,7 @@ export interface DbAuthUser {
   oilfield: string;
   employeeId: number | null;
   isActive: boolean;
+  mustResetPassword?: boolean;
 }
 
 export interface AuthRequest extends Request {
@@ -28,7 +31,24 @@ export interface AuthRequest extends Request {
   permissions?: Permission[];
 }
 
-async function getOrCreateUser(decoded: DecodedIdToken): Promise<DbAuthUser> {
+function toSafeAuthUser(row: typeof users.$inferSelect): DbAuthUser {
+  return {
+    id: row.id,
+    uid: row.uid,
+    employeeCode: row.employeeCode,
+    email: row.email,
+    displayName: row.displayName,
+    photoUrl: row.photoUrl,
+    role: row.role as UserRole,
+    department: row.department,
+    oilfield: row.oilfield,
+    employeeId: row.employeeId,
+    isActive: row.isActive,
+    mustResetPassword: row.mustResetPassword,
+  };
+}
+
+async function getOrCreateFirebaseUser(decoded: DecodedIdToken): Promise<DbAuthUser> {
   const uid = decoded.uid;
   const email = (decoded.email || `${uid}@boc.oil.gov.iq`).toLowerCase();
   const displayName = decoded.name || email.split('@')[0];
@@ -44,12 +64,11 @@ async function getOrCreateUser(decoded: DecodedIdToken): Promise<DbAuthUser> {
           .set({ email, displayName, photoUrl, updatedAt: new Date() })
           .where(eq(users.uid, uid))
           .returning();
-        return updated[0] as DbAuthUser;
+        return toSafeAuthUser(updated[0]);
       }
-      return row as DbAuthUser;
+      return toSafeAuthUser(row);
     }
 
-    // First user in an empty system or initial owner receives HR_ADMIN role
     const [{ value: userCount }] = await db.select({ value: count() }).from(users);
     const defaultRole: UserRole =
       Number(userCount) === 0 || email === INITIAL_OWNER_EMAIL ? 'HR_ADMIN' : 'EMPLOYEE';
@@ -72,7 +91,7 @@ async function getOrCreateUser(decoded: DecodedIdToken): Promise<DbAuthUser> {
       })
       .returning();
 
-    return inserted[0] as DbAuthUser;
+    return toSafeAuthUser(inserted[0]);
   } catch (error) {
     console.error('Failed to sync authenticated user with PostgreSQL:', error);
     throw new Error('تعذّر التحقق من حساب المستخدم في قاعدة البيانات.', { cause: error });
@@ -90,16 +109,40 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
     return res.status(401).json({ error: 'غير مصرح: رمز المصادقة مفقود.' });
   }
 
+  // 1. Server-signed Employee ID session token (boc1.*)
+  if (token.startsWith('boc1.')) {
+    const payload = verifySessionToken(token);
+    if (!payload) {
+      return res.status(401).json({ error: 'انتهت جلسة الدخول أو الرمز غير صالح. يرجى تسجيل الدخول مجدداً.' });
+    }
+    try {
+      const [row] = await db.select().from(users).where(eq(users.id, payload.sub)).limit(1);
+      if (!row || !row.isActive || row.tokenVersion !== payload.tv) {
+        return res.status(401).json({ error: 'تم إنهاء الجلسة أو تعطيل الحساب.' });
+      }
+      if (row.mustResetPassword) {
+        return res.status(403).json({ error: 'يرجى إتمام تعيين كلمة المرور الشخصية عبر البريد الإلكتروني أولاً.' });
+      }
+      req.dbUser = toSafeAuthUser(row);
+      req.permissions = getPermissionsForRole(row.role);
+      return next();
+    } catch (error) {
+      console.error('Session lookup error:', error);
+      return res.status(500).json({ error: 'تعذر التحقق من الجلسة في قاعدة البيانات.' });
+    }
+  }
+
+  // 2. Firebase Auth ID Token (Google Sign-In)
   try {
     const decoded = await adminAuth.verifyIdToken(token);
-    const dbUser = await getOrCreateUser(decoded);
+    const dbUser = await getOrCreateFirebaseUser(decoded);
     if (!dbUser.isActive) {
       return res.status(403).json({ error: 'تم تعطيل هذا الحساب من قبل مدير النظام.' });
     }
     req.firebaseUser = decoded;
     req.dbUser = dbUser;
     req.permissions = getPermissionsForRole(dbUser.role);
-    next();
+    return next();
   } catch (error) {
     console.error('Auth verification error:', error);
     return res.status(401).json({ error: 'انتهت جلسة الدخول أو الرمز غير صالح.' });

@@ -14,7 +14,40 @@ import type {
   TrainingCourseRecord,
   TrainingEnrollmentRecord,
   TransactionRecord,
+  UserRole,
 } from '../types/hrms';
+
+// Session token held strictly in JS/React memory (never localStorage or sessionStorage)
+let inMemorySessionToken: string | null = null;
+
+export function setInMemorySessionToken(token: string | null) {
+  inMemorySessionToken = token;
+}
+
+export function getInMemorySessionToken(): string | null {
+  return inMemorySessionToken;
+}
+
+export interface EmailOtpPreview {
+  to: string;
+  from: string;
+  subject: string;
+  bodyAr: string;
+  otpCode: string;
+  expiresMinutes: number;
+  sentAt: string;
+}
+
+export interface LoginResponse {
+  requiresPasswordReset: boolean;
+  purpose?: 'FIRST_LOGIN' | 'FORGOT_PASSWORD';
+  employeeCode?: string;
+  displayName?: string;
+  maskedEmail?: string;
+  emailPreview?: EmailOtpPreview;
+  token?: string;
+  user?: AppUser;
+}
 
 export interface BootstrapResponse {
   user: AppUser;
@@ -55,24 +88,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    throw new ApiError('يرجى تسجيل الدخول أولاً.', 401);
-  }
-  const token = await currentUser.getIdToken();
-  const headers = new Headers(options.headers || {});
-  headers.set('Authorization', `Bearer ${token}`);
-  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-
-  const res = await fetch(path, {
-    ...options,
-    headers,
-    cache: 'no-store',
-  });
-
+async function parseJsonResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
   if (text) {
@@ -90,9 +106,98 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
         : null) || `خطأ في الخادم (${res.status})`;
     throw new ApiError(errMsg, res.status);
   }
-
   return data as T;
 }
+
+export async function publicFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers || {});
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const res = await fetch(path, { ...options, headers, cache: 'no-store' });
+  return parseJsonResponse<T>(res);
+}
+
+export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let token = inMemorySessionToken;
+  if (!token && auth.currentUser) {
+    token = await auth.currentUser.getIdToken();
+  }
+  if (!token) {
+    throw new ApiError('يرجى تسجيل الدخول أولاً.', 401);
+  }
+
+  const headers = new Headers(options.headers || {});
+  headers.set('Authorization', `Bearer ${token}`);
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const res = await fetch(path, {
+    ...options,
+    headers,
+    cache: 'no-store',
+  });
+
+  return parseJsonResponse<T>(res);
+}
+
+export const authApi = {
+  status: () => publicFetch<{ initialized: boolean; employeeCount: number }>('/api/auth/status'),
+
+  bootstrapWorkspace: (payload: {
+    hrEmployeeCode: string;
+    hrFullName: string;
+    hrEmail: string;
+    hrPassword: string;
+    employeeInitialPassword?: string;
+    includeSampleBocData: boolean;
+  }) =>
+    publicFetch<{ token: string; user: AppUser; firstLoginDemoCode: string | null }>(
+      '/api/auth/bootstrap-workspace',
+      { method: 'POST', body: JSON.stringify(payload) }
+    ),
+
+  login: (employeeCode: string, password: string) =>
+    publicFetch<LoginResponse>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ employeeCode, password }),
+    }),
+
+  forgotPassword: (employeeCode: string) =>
+    publicFetch<{
+      ok: boolean;
+      employeeCode: string;
+      displayName: string;
+      maskedEmail: string;
+      emailPreview: EmailOtpPreview;
+    }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ employeeCode }),
+    }),
+
+  resetPassword: (payload: { employeeCode: string; otpCode: string; newPassword: string }) =>
+    publicFetch<{ ok: boolean; token: string; user: AppUser }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  logout: async () => {
+    const token = inMemorySessionToken;
+    inMemorySessionToken = null;
+    if (token) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+      } catch {
+        // ignore network failures during logout
+      }
+    }
+  },
+};
 
 export const hrmsApi = {
   bootstrap: () => apiFetch<BootstrapResponse>('/api/bootstrap'),
@@ -100,7 +205,13 @@ export const hrmsApi = {
   search: (q: string) => apiFetch<GlobalSearchResult>(`/api/search?q=${encodeURIComponent(q)}`),
 
   // Employees
-  createEmployee: (payload: Partial<EmployeeRecord>) =>
+  createEmployee: (
+    payload: Partial<EmployeeRecord> & {
+      provisionAccount?: boolean;
+      initialPassword?: string;
+      accountRole?: UserRole;
+    }
+  ) =>
     apiFetch<EmployeeRecord>('/api/employees', { method: 'POST', body: JSON.stringify(payload) }),
   updateEmployee: (id: number, payload: Partial<EmployeeRecord>) =>
     apiFetch<EmployeeRecord>(`/api/employees/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),

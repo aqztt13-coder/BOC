@@ -45,6 +45,7 @@ export type ActiveView =
 export interface AppUser {
   id: number;
   uid: string;
+  employeeCode?: string | null;
   email: string;
   displayName: string;
   photoUrl?: string | null;
@@ -53,6 +54,7 @@ export interface AppUser {
   oilfield: string;
   employeeId: number | null;
   isActive: boolean;
+  mustResetPassword?: boolean;
   permissions: Permission[];
   createdAt?: string;
 }
