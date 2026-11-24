@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/index.ts';
 import {
@@ -38,6 +38,12 @@ authRouter.use((_req, res, next) => {
   res.setHeader('Pragma', 'no-cache');
   next();
 });
+
+function normalizeDigits(value: string): string {
+  return value
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
 
 function sanitizeUser(u: typeof users.$inferSelect) {
   return {
@@ -753,7 +759,7 @@ authRouter.post('/bootstrap-workspace', async (req, res) => {
 // 3. Employee ID + Password Login (Enforces First-Time Email OTP Password Reset)
 authRouter.post('/login', async (req, res) => {
   const schema = z.object({
-    employeeCode: z.string().trim().min(2).max(40),
+    employeeCode: z.string().trim().min(2).max(120),
     password: z.string().min(1).max(128),
   });
   const parsed = schema.safeParse(req.body);
@@ -761,9 +767,20 @@ authRouter.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'يرجى إدخال الرقم الوظيفي وكلمة المرور بشكل صحيح.' });
   }
 
-  const code = parsed.data.employeeCode.toUpperCase();
+  const normalizedInput = normalizeDigits(parsed.data.employeeCode).trim();
+  const code = normalizedInput.toUpperCase();
   try {
     let [user] = await db.select().from(users).where(eq(users.employeeCode, code)).limit(1);
+
+    // Fallback lookup by registered email if user entered email instead of employee code
+    if (!user && normalizedInput.includes('@')) {
+      const [byEmail] = await db
+        .select()
+        .from(users)
+        .where(sql`lower(${users.email}) = ${normalizedInput.toLowerCase()}`)
+        .limit(1);
+      user = byEmail;
+    }
 
     // Fallback lookup through linked employees table by employeeCode
     if (!user) {
@@ -842,7 +859,7 @@ authRouter.post('/forgot-password', async (req, res) => {
     return res.status(400).json({ error: 'يرجى إدخال الرقم الوظيفي.' });
   }
 
-  const code = parsed.data.employeeCode.toUpperCase();
+  const code = normalizeDigits(parsed.data.employeeCode).trim().toUpperCase();
   try {
     const [user] = await db.select().from(users).where(eq(users.employeeCode, code)).limit(1);
     if (!user || !user.isActive) {
@@ -891,7 +908,7 @@ authRouter.post('/reset-password', async (req, res) => {
     return res.status(400).json({ error: parsed.error.issues[0]?.message || 'بيانات إعادة التعيين غير صالحة.' });
   }
 
-  const code = parsed.data.employeeCode.toUpperCase();
+  const code = normalizeDigits(parsed.data.employeeCode).trim().toUpperCase();
   try {
     const updatedUser = await db.transaction(async (tx) => {
       const [lockedUser] = await tx

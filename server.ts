@@ -2,11 +2,11 @@ import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { and, eq, isNull } from 'drizzle-orm';
-import { createServer as createViteServer } from 'vite';
 import { checkDatabaseReadiness, db } from './src/db/index.ts';
 import { appreciations, documents, employees, transactions } from './src/db/schema.ts';
 import { authRouter } from './src/server/authRoutes.ts';
@@ -15,7 +15,15 @@ import { formatBaghdadDateTime } from './src/utils/hrEngine.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const isProduction = process.env.NODE_ENV === 'production';
+const distIndexPath = path.resolve(__dirname, 'dist', 'index.html');
+const isRunningUnderTsx = process.execArgv.some((arg) => arg.includes('tsx'));
+const isProduction =
+  process.env.NODE_ENV === 'production' ||
+  process.env.npm_lifecycle_event === 'start' ||
+  (process.env.NODE_ENV !== 'development' &&
+    process.env.npm_lifecycle_event !== 'dev' &&
+    !isRunningUnderTsx &&
+    fs.existsSync(distIndexPath));
 const PORT = Number(process.env.PORT || 3000);
 
 async function startServer() {
@@ -42,6 +50,7 @@ async function startServer() {
                 'https://identitytoolkit.googleapis.com',
                 'https://securetoken.googleapis.com',
               ],
+              frameSrc: ["'self'", 'https://*.firebaseapp.com', 'https://accounts.google.com'],
               objectSrc: ["'none'"],
               baseUri: ["'self'"],
               formAction: ["'self'"],
@@ -229,15 +238,21 @@ async function startServer() {
   // Protected Enterprise HR API routes (rate-limited)
   app.use('/api', apiRateLimiter, apiRouter);
 
+  // Explicit JSON 404 for unknown /api/* routes so they never fall through to SPA HTML
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'نقطة النهاية المطلوبة غير موجودة على الخادم.' });
+  });
+
   const httpServer = http.createServer(app);
 
-  if (isProduction) {
+  if (isProduction && fs.existsSync(distIndexPath)) {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,

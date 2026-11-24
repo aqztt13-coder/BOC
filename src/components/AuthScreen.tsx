@@ -74,6 +74,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
+  const [backendUnavailable, setBackendUnavailable] = useState(false);
+
+  const handleClearCacheAndReload = async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch {
+      // best-effort cache cleanup
+    }
+    window.location.reload();
+  };
 
   useEffect(() => {
     let active = true;
@@ -81,13 +98,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       .status()
       .then((res) => {
         if (!active) return;
+        setBackendUnavailable(false);
         setWorkspaceInitialized(res.initialized);
         if (!res.initialized) {
           setStep('setup');
         }
       })
-      .catch(() => {
-        // default to login form
+      .catch((err: unknown) => {
+        if (!active) return;
+        const status = (err as { status?: number })?.status;
+        if (status === 404) {
+          setBackendUnavailable(true);
+        }
       })
       .finally(() => {
         if (active) setStatusLoading(false);
@@ -681,6 +703,31 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               {localNotice && (
                 <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3.5 py-2.5 text-xs font-medium text-emerald-800 dark:text-emerald-200">
                   {localNotice}
+                </div>
+              )}
+
+              {backendUnavailable && (
+                <div
+                  role="alert"
+                  className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3.5 text-xs text-amber-900 dark:text-amber-200 space-y-2"
+                >
+                  <p className="font-bold">
+                    {lang === 'ar'
+                      ? 'خادم المصادقة غير متاح على هذا الرابط (404)'
+                      : 'Authentication server unreachable at this URL (404)'}
+                  </p>
+                  <p className="leading-relaxed text-[11px]">
+                    {lang === 'ar'
+                      ? 'قد تكون فاتحاً نسخة مخزّنة مؤقتاً (PWA) أو رابطاً غير متصل بالخادم الخلفي. اضغط الزر أدناه لمسح الذاكرة المؤقتة وإعادة الاتصال، أو افتح التطبيق من الرابط النشط.'
+                      : 'You may be viewing a cached PWA copy or a static URL without the backend running. Clear cache to reconnect or open the live app URL.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleClearCacheAndReload}
+                    className="rounded-lg bg-[#0B1F3A] dark:bg-[#C69214] text-white dark:text-slate-950 px-3 py-1.5 text-[11px] font-bold hover:opacity-90 cursor-pointer"
+                  >
+                    {lang === 'ar' ? 'مسح الذاكرة المؤقتة وإعادة التحميل' : 'Clear Cache & Reload'}
+                  </button>
                 </div>
               )}
 

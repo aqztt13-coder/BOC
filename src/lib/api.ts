@@ -88,7 +88,14 @@ export class ApiError extends Error {
   }
 }
 
-async function parseJsonResponse<T>(res: Response): Promise<T> {
+const API_BASE = ((import.meta.env?.VITE_API_BASE_URL as string | undefined) || '').trim().replace(/\/+$/, '');
+
+function resolveApiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+async function parseJsonResponse<T>(res: Response, path: string): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
   if (text) {
@@ -100,11 +107,23 @@ async function parseJsonResponse<T>(res: Response): Promise<T> {
   }
 
   if (!res.ok) {
-    const errMsg =
-      (data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string'
+    const serverErr =
+      data && typeof data === 'object' && 'error' in data && typeof (data as { error: unknown }).error === 'string'
         ? (data as { error: string }).error
-        : null) || `خطأ في الخادم (${res.status})`;
-    throw new ApiError(errMsg, res.status);
+        : null;
+
+    if (serverErr) {
+      throw new ApiError(serverErr, res.status);
+    }
+
+    if (res.status === 404) {
+      throw new ApiError(
+        `تعذر الوصول إلى خادم النظام (${path} — 404). يبدو أن التطبيق مفتوح من رابط استضافة ثابتة أو نسخة مخزّنة مؤقتاً (PWA) بدون خادم خلفي نشط. يرجى فتح الرابط النشط للتطبيق أو تحديث الصفحة بعد مسح الذاكرة المؤقتة.`,
+        404
+      );
+    }
+
+    throw new ApiError(`خطأ في الخادم (${res.status})`, res.status);
   }
   return data as T;
 }
@@ -114,8 +133,13 @@ export async function publicFetch<T>(path: string, options: RequestInit = {}): P
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(path, { ...options, headers, cache: 'no-store' });
-  return parseJsonResponse<T>(res);
+  const res = await fetch(resolveApiUrl(path), {
+    ...options,
+    headers,
+    credentials: 'same-origin',
+    cache: 'no-store',
+  });
+  return parseJsonResponse<T>(res, path);
 }
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -133,13 +157,14 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(path, {
+  const res = await fetch(resolveApiUrl(path), {
     ...options,
     headers,
+    credentials: 'same-origin',
     cache: 'no-store',
   });
 
-  return parseJsonResponse<T>(res);
+  return parseJsonResponse<T>(res, path);
 }
 
 export const authApi = {
@@ -187,9 +212,10 @@ export const authApi = {
     inMemorySessionToken = null;
     if (token) {
       try {
-        await fetch('/api/auth/logout', {
+        await fetch(resolveApiUrl('/api/auth/logout'), {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
+          credentials: 'same-origin',
           cache: 'no-store',
         });
       } catch {
